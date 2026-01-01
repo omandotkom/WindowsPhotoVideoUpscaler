@@ -125,6 +125,13 @@
                                 <Slider Minimum="0" Maximum="0.5" Value="{Binding TemporalBlendStrength}" Width="200" />
                                 <TextBlock Text="{Binding TemporalBlendStrength, StringFormat=F2}" Foreground="#334155" Margin="8,0,0,0" VerticalAlignment="Center" />
                             </DockPanel>
+                            <CheckBox Content="Face refinement" IsChecked="{Binding EnableFaceRefinement}" Foreground="#334155" Margin="0,0,0,4" />
+                            <TextBlock Text="{Binding FaceModelStatus}" Foreground="#64748B" Margin="0,0,0,6" />
+                            <Button Content="Download Face Models"
+                                    Command="{Binding DownloadFaceModelsCommand}"
+                                    Visibility="{Binding IsFaceModelMissing, Converter={StaticResource BoolToVisibility}}"
+                                    Padding="10,4"
+                                    Margin="0,0,0,8" />
 
                             <Expander Header="Advanced tiling" Foreground="#0F172A">
                                 <StackPanel Margin="0,6,0,0">

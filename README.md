@@ -11,6 +11,7 @@ Download the latest release and extract `Upscaler-win-x64.zip`, then run `Upscal
 - DirectML GPU inference with device name shown and CPU fallback when unavailable.
 - Preview on a small center crop with dimension readout and suggested scale (x2/x4).
 - Configurable scale, mode, quality preset, denoise/temporal smoothing, tiling, output format, and JPEG quality.
+- Face refinement toggle (YuNet detector + GFPGAN) with separate model download.
 - Batch processing with per-tile progress, ETA, cancel, and optional duplicate skipping by SHA256.
 
 ## Image upscaling details
@@ -19,6 +20,8 @@ Download the latest release and extract `Upscaler-win-x64.zip`, then run `Upscal
 - Tiling auto-sizes based on image resolution; manual tile size/overlap available.
 - Weighted seam blending reduces tile edges; overlap scales with output.
 - Output formats: Original, PNG, JPEG, BMP, TIFF with optional EXIF copy for JPEG/TIFF.
+- Face refinement runs after upscaling: YuNet detects faces, aligns them, GFPGAN refines, then results are blended back into the full image.
+- Refinement adds a "Refining faces..." step to the progress message.
 
 ## Video upscaling details
 - Supported formats: mp4, mov, mkv, avi, webm, 3gp (requires FFmpeg).
@@ -26,12 +29,14 @@ Download the latest release and extract `Upscaler-win-x64.zip`, then run `Upscal
 - Videos are decoded to frames in `AppData/cache/`, upscaled, then re-encoded with audio preserved when possible.
 - Hardware decode option plus encoder choices (libx264, NVENC, AMF, QSV) with mpeg4 fallback.
 - Progress is shown per phase: decode, upscale, encode.
+- Video face refinement: incoming feature.
 
 ## Model management
 - Catalog source: `Upscaler.App/models.json` with name, version, scale, url, sha256, size, description, license.
 - Downloads retry up to 3 times with exponential backoff and resume when supported.
 - Zip models extract `.onnx` and optional `.data` weights into `AppData/models/`.
 - A metadata JSON file is written alongside each downloaded model.
+- Face refinement models (YuNet + GFPGAN) are separate catalog entries and download via the "Download Face Models" button when the toggle is enabled.
 
 ## Requirements
 - Windows 10/11
@@ -115,6 +120,7 @@ scripts/setup-ffmpeg-debug.ps1
 - Quality preset: "Clean + Sharp" enables denoise + temporal smoothing.
 - Denoise: simple box blur pre-pass with strength slider (0 to 0.5 UI range).
 - Temporal smoothing: blends with previous output frame/ image (useful for video).
+- Face refinement: detects faces with YuNet, aligns them, refines with GFPGAN, and blends results back (requires face models).
 - Tiling: Auto picks size by resolution; Advanced allows manual tile size/overlap.
 - Output format: Original, PNG, JPEG, BMP, TIFF.
 - Video options: hardware decode toggle and encoder selection.

@@ -13,19 +13,22 @@ public sealed class ImagePipeline
     private readonly IInferenceEngine _inference;
     private readonly ITileMerger _merger;
     private readonly IImagePostprocessor _postprocessor;
+    private readonly IFaceRefiner? _faceRefiner;
 
     public ImagePipeline(
         IImagePreprocessor preprocessor,
         ITileSplitter tileSplitter,
         IInferenceEngine inference,
         ITileMerger merger,
-        IImagePostprocessor postprocessor)
+        IImagePostprocessor postprocessor,
+        IFaceRefiner? faceRefiner)
     {
         _preprocessor = preprocessor;
         _tileSplitter = tileSplitter;
         _inference = inference;
         _merger = merger;
         _postprocessor = postprocessor;
+        _faceRefiner = faceRefiner;
     }
 
     public async Task<UpscaleResult> UpscaleAsync(
@@ -97,6 +100,20 @@ public sealed class ImagePipeline
                 {
                     AppLogger.Warn("Temporal blend skipped due to mismatched frame sizes.");
                 }
+            }
+
+            if (request.EnableFaceRefinement && _faceRefiner != null)
+            {
+                progress?.Report(new UpscaleProgress
+                {
+                    CurrentIndex = currentImage,
+                    Total = request.InputFiles.Count,
+                    TileIndex = tileTotal,
+                    TileTotal = tileTotal,
+                    OverallPercent = (double)currentImage / request.InputFiles.Count * 100,
+                    Message = "Refining faces..."
+                });
+                outputImage = _faceRefiner.Refine(outputImage, cancellationToken);
             }
 
             string outputPath = OutputNaming.BuildOutputPath(input, request.OutputFolder, request.Scale, request.OutputFormat);

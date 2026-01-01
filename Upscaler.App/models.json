@@ -8,7 +8,8 @@
       "sha256": "1b764a78bc377cb14e3a6109cfed20d7c67b54659f70a016e509172075727376",
       "size": 62330950,
       "description": "Real-ESRGAN x4plus float ONNX (zip).",
-      "license": "Original model license: https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE. Deployable model license: DEPLOYMENT_MODEL_LICENSE.pdf in repo."
+      "license": "Original model license: https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE. Deployable model license: DEPLOYMENT_MODEL_LICENSE.pdf in repo.",
+      "kind": "upscale"
     },
     {
       "name": "4x-UltraSharp (ONNX)",
@@ -18,7 +19,8 @@
       "sha256": "c1178a4d6c7de327eae3b8c24886555592432fd1f29ae1fb85d765f120d8ce3c",
       "size": 66938049,
       "description": "4x-UltraSharp ONNX from ofter/4x-UltraSharp.",
-      "license": "artistic-2.0"
+      "license": "artistic-2.0",
+      "kind": "upscale"
     },
     {
       "name": "Fast Upscaler x2",
@@ -28,7 +30,30 @@
       "sha256": "REPLACE_WITH_SHA256",
       "size": 0,
       "description": "Lightweight model for quick previews (x2).",
-      "license": "RESEARCH_ONLY"
+      "license": "RESEARCH_ONLY",
+      "kind": "upscale"
+    },
+    {
+      "name": "YuNet Face Detector",
+      "version": "2023mar",
+      "scale": 1,
+      "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
+      "sha256": "8F2383E4DD3CFBB4553EA8718107FC0423210DC964F9F4280604804ED2552FA4",
+      "size": 232589,
+      "description": "YuNet face detector (640x640 input).",
+      "license": "MIT (opencv_zoo/face_detection_yunet)",
+      "kind": "face-detect"
+    },
+    {
+      "name": "GFPGAN v1.4 (ONNX)",
+      "version": "1.4",
+      "scale": 1,
+      "url": "https://huggingface.co/Meeperomi/GFPGANv1.4-onnx/resolve/main/GFPGANv1.4.onnx",
+      "sha256": "cd7311b8d9e13cdb1e208b12363182da58c7bf45e26d1aa67bbeac4751aae92e",
+      "size": 340256686,
+      "description": "GFPGAN v1.4 face refinement ONNX.",
+      "license": "MIT (Meeperomi/GFPGANv1.4-onnx model card)",
+      "kind": "face-refine"
     }
   ]
 }

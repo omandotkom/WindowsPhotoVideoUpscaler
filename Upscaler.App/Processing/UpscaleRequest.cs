@@ -17,6 +17,7 @@ public sealed class UpscaleRequest
     public int JpegQuality { get; init; } = 92;
     public ImageCrop? PreviewCrop { get; init; }
     public double DenoiseStrength { get; init; }
+    public bool EnableFaceRefinement { get; init; }
     public bool EnableTemporalBlend { get; init; }
     public double TemporalBlendStrength { get; init; } = 0.15;
 }

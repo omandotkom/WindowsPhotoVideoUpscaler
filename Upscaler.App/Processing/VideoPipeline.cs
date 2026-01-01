@@ -77,6 +77,7 @@ public sealed class VideoPipeline
                 OutputFormat = "Png",
                 JpegQuality = request.JpegQuality,
                 DenoiseStrength = request.DenoiseStrength,
+                EnableFaceRefinement = false,
                 EnableTemporalBlend = request.EnableTemporalBlend,
                 TemporalBlendStrength = request.TemporalBlendStrength
             };

@@ -32,3 +32,8 @@ public interface IImagePostprocessor
 {
     Task SaveAsync(ImageTensor image, OutputOptions options, CancellationToken cancellationToken);
 }
+
+public interface IFaceRefiner
+{
+    ImageTensor Refine(ImageTensor image, CancellationToken cancellationToken);
+}

@@ -63,6 +63,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private double _videoUpscalePercent;
     private double _videoEncodePercent;
     private int _selectedScale = 2;
+    private bool _enableFaceRefinement = true;
+    private string _faceModelStatus = "Face refinement: checking...";
+    private bool _isFaceModelMissing = true;
+    private ModelDefinition? _faceDetectorModel;
+    private ModelDefinition? _faceRefinerModel;
 
     public ObservableCollection<ModelDefinition> Models { get; } = new();
     public ObservableCollection<string> SelectedFiles { get; } = new();
@@ -361,6 +366,47 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public bool IsTemporalBlendEnabled => EnableTemporalBlend;
 
+    public bool EnableFaceRefinement
+    {
+        get => _enableFaceRefinement;
+        set
+        {
+            if (_enableFaceRefinement != value)
+            {
+                _enableFaceRefinement = value;
+                OnPropertyChanged();
+                UpdateFaceModelStatus();
+            }
+        }
+    }
+
+    public string FaceModelStatus
+    {
+        get => _faceModelStatus;
+        private set
+        {
+            if (_faceModelStatus != value)
+            {
+                _faceModelStatus = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public bool IsFaceModelMissing
+    {
+        get => _isFaceModelMissing;
+        private set
+        {
+            if (_isFaceModelMissing != value)
+            {
+                _isFaceModelMissing = value;
+                OnPropertyChanged();
+                UpdateActionState();
+            }
+        }
+    }
+
     public double TemporalBlendStrength
     {
         get => _temporalBlendStrength;
@@ -482,6 +528,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public RelayCommand BrowseOutputFolderCommand { get; }
     public AsyncRelayCommand DownloadModelCommand { get; }
     public AsyncRelayCommand RedownloadModelCommand { get; }
+    public AsyncRelayCommand DownloadFaceModelsCommand { get; }
     public AsyncRelayCommand PreviewCommand { get; }
     public AsyncRelayCommand UpscaleCommand { get; }
     public RelayCommand CancelCommand { get; }
@@ -495,6 +542,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         BrowseOutputFolderCommand = new RelayCommand(BrowseOutputFolder, () => !IsProcessing);
         DownloadModelCommand = new AsyncRelayCommand(DownloadModelAsync, CanDownloadModel);
         RedownloadModelCommand = new AsyncRelayCommand(RedownloadModelAsync, CanRedownloadModel);
+        DownloadFaceModelsCommand = new AsyncRelayCommand(DownloadFaceModelsAsync, CanDownloadFaceModels);
         PreviewCommand = new AsyncRelayCommand(PreviewAsync, CanPreview);
         UpscaleCommand = new AsyncRelayCommand(UpscaleAsync, CanUpscale);
         CancelCommand = new RelayCommand(CancelAll, () => IsDownloading || IsProcessing);
@@ -508,11 +556,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
             Models.Clear();
-            foreach (ModelDefinition model in catalog.Models)
+            foreach (ModelDefinition model in catalog.Models.Where(IsUpscaleModel))
             {
                 Models.Add(model);
             }
         });
+
+        _faceDetectorModel = catalog.Models.FirstOrDefault(m => IsModelKind(m, "face-detect"));
+        _faceRefinerModel = catalog.Models.FirstOrDefault(m => IsModelKind(m, "face-refine"));
+        UpdateFaceModelStatus();
 
         if (Models.Count > 0)
         {
@@ -701,6 +753,62 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task DownloadModelInternalAsync(ModelDefinition model, string label)
+    {
+        Progress<DownloadProgress> progress = new(p =>
+        {
+            if (p.TotalBytes.HasValue && p.TotalBytes.Value > 0)
+            {
+                DownloadProgressPercent = (double)p.BytesReceived / p.TotalBytes.Value * 100;
+                DownloadProgressText = $"{label}: {FormatSize(p.BytesReceived)} / {FormatSize(p.TotalBytes.Value)}";
+            }
+            else
+            {
+                DownloadProgressPercent = 0;
+                DownloadProgressText = $"{label}: {FormatSize(p.BytesReceived)}";
+            }
+        });
+
+        await Task.Run(
+            () => _downloader.DownloadAsync(model, progress, _downloadCts?.Token ?? CancellationToken.None),
+            _downloadCts?.Token ?? CancellationToken.None);
+    }
+
+    private async Task DownloadFaceModelsAsync()
+    {
+        if (_faceDetectorModel == null || _faceRefinerModel == null)
+        {
+            return;
+        }
+
+        try
+        {
+            IsDownloading = true;
+            DownloadProgressText = "Preparing face model downloads...";
+            DownloadProgressPercent = 0;
+            _downloadCts = new CancellationTokenSource();
+
+            await DownloadModelInternalAsync(_faceDetectorModel, "face detector");
+            await DownloadModelInternalAsync(_faceRefinerModel, "face refiner");
+            UpdateFaceModelStatus();
+            JobProgressText = "Face models downloaded.";
+        }
+        catch (OperationCanceledException)
+        {
+            DownloadProgressText = "Face model download canceled.";
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Face model download failed.", ex);
+            DownloadProgressText = $"Face model download failed: {ex.Message}";
+        }
+        finally
+        {
+            IsDownloading = false;
+            _downloadCts = null;
+        }
+    }
+
     private async Task RedownloadModelAsync()
     {
         if (SelectedModel == null)
@@ -732,6 +840,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ImageCrop? crop = GetPreviewCrop(input);
 
         OnnxInferenceEngine? engine = null;
+        FaceRefinementPipeline? faceRefiner = null;
         try
         {
             IsProcessing = true;
@@ -743,7 +852,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             string previewFolder = AppPaths.CachePath;
             Directory.CreateDirectory(previewFolder);
 
-            ImagePipeline pipeline = CreatePipeline(out engine);
+            ImagePipeline pipeline = CreatePipeline(out engine, out faceRefiner);
             UpscaleRequest request = new()
             {
                 InputFiles = new List<string> { input },
@@ -757,6 +866,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 JpegQuality = JpegQuality,
                 DenoiseStrength = EnableDenoise ? DenoiseStrength : 0,
                 PreviewCrop = crop,
+                EnableFaceRefinement = EnableFaceRefinement,
                 EnableTemporalBlend = false
             };
 
@@ -791,6 +901,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             IsProcessing = false;
             _jobCts = null;
             engine?.Dispose();
+            faceRefiner?.Dispose();
         }
     }
 
@@ -839,6 +950,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Directory.CreateDirectory(outputFolder);
 
         OnnxInferenceEngine? engine = null;
+        FaceRefinementPipeline? faceRefiner = null;
         try
         {
             IsProcessing = true;
@@ -846,7 +958,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _jobCts = new CancellationTokenSource();
             Stopwatch stopwatch = Stopwatch.StartNew();
 
-            ImagePipeline pipeline = CreatePipeline(out engine);
+            ImagePipeline pipeline = CreatePipeline(out engine, out faceRefiner);
             Progress<UpscaleProgress> progress = new(p =>
             {
                 double avgSeconds = p.CurrentIndex > 0 ? stopwatch.Elapsed.TotalSeconds / p.CurrentIndex : 0;
@@ -875,6 +987,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 OutputFormat = SelectedOutputFormat,
                 JpegQuality = JpegQuality,
                 DenoiseStrength = EnableDenoise ? DenoiseStrength : 0,
+                EnableFaceRefinement = EnableFaceRefinement,
                 EnableTemporalBlend = EnableTemporalBlend,
                 TemporalBlendStrength = TemporalBlendStrength
             };
@@ -906,6 +1019,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             IsProcessing = false;
             _jobCts = null;
             engine?.Dispose();
+            faceRefiner?.Dispose();
         }
     }
 
@@ -921,13 +1035,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Directory.CreateDirectory(outputFolder);
 
         OnnxInferenceEngine? engine = null;
+        FaceRefinementPipeline? faceRefiner = null;
         try
         {
             IsProcessing = true;
             UpscaleProgressPercent = 0;
             _jobCts = new CancellationTokenSource();
 
-            ImagePipeline pipeline = CreatePipeline(out engine);
+            ImagePipeline pipeline = CreatePipeline(out engine, out faceRefiner);
             VideoPipeline videoPipeline = new(pipeline, new FfmpegRunner());
             List<string> outputs = new();
 
@@ -994,6 +1109,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             IsProcessing = false;
             _jobCts = null;
             engine?.Dispose();
+            faceRefiner?.Dispose();
         }
     }
 
@@ -1015,6 +1131,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool CanDownloadModel() => SelectedModel != null && IsSelectedModelMissing && !IsDownloading && !IsProcessing;
 
     private bool CanRedownloadModel() => SelectedModel != null && IsSelectedModelAvailable && !IsDownloading && !IsProcessing;
+
+    private bool CanDownloadFaceModels()
+        => EnableFaceRefinement
+        && _faceDetectorModel != null
+        && _faceRefinerModel != null
+        && IsFaceModelMissing
+        && !IsDownloading
+        && !IsProcessing;
 
     private bool CanPreview()
         => SelectedFiles.Count > 0
@@ -1044,6 +1168,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
         IsSelectedModelMissing = !available;
         ModelStatus = available ? "Ready (local model found)." : "Missing model. Download required.";
         UpdateActionState();
+    }
+
+    private void UpdateFaceModelStatus()
+    {
+        if (!EnableFaceRefinement)
+        {
+            FaceModelStatus = "Face refinement disabled.";
+            IsFaceModelMissing = false;
+            return;
+        }
+
+        if (_faceDetectorModel == null || _faceRefinerModel == null)
+        {
+            FaceModelStatus = "Face refinement models missing from catalog.";
+            IsFaceModelMissing = true;
+            return;
+        }
+
+        bool detectorReady = ModelFileStore.IsModelAvailable(_faceDetectorModel);
+        bool refinerReady = ModelFileStore.IsModelAvailable(_faceRefinerModel);
+        bool available = detectorReady && refinerReady;
+        IsFaceModelMissing = !available;
+        FaceModelStatus = available
+            ? "Face refinement ready."
+            : "Face refinement models missing. Download required.";
     }
 
     private void SyncSelectedScaleToModel()
@@ -1106,6 +1255,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         BrowseOutputFolderCommand.RaiseCanExecuteChanged();
         DownloadModelCommand.RaiseCanExecuteChanged();
         RedownloadModelCommand.RaiseCanExecuteChanged();
+        DownloadFaceModelsCommand.RaiseCanExecuteChanged();
         PreviewCommand.RaiseCanExecuteChanged();
         UpscaleCommand.RaiseCanExecuteChanged();
         CancelCommand.RaiseCanExecuteChanged();
@@ -1144,7 +1294,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    private ImagePipeline CreatePipeline(out OnnxInferenceEngine engine)
+    private ImagePipeline CreatePipeline(out OnnxInferenceEngine engine, out FaceRefinementPipeline? faceRefiner)
     {
         if (SelectedModel == null)
         {
@@ -1156,7 +1306,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
         engine = new OnnxInferenceEngine(SelectedModel);
         WeightedTileMerger merger = new();
         WicImagePostprocessor postprocessor = new();
-        return new ImagePipeline(preprocessor, splitter, engine, merger, postprocessor);
+        faceRefiner = CreateFaceRefiner();
+        return new ImagePipeline(preprocessor, splitter, engine, merger, postprocessor, faceRefiner);
+    }
+
+    private FaceRefinementPipeline? CreateFaceRefiner()
+    {
+        if (!EnableFaceRefinement || _faceDetectorModel == null || _faceRefinerModel == null)
+        {
+            return null;
+        }
+
+        if (!ModelFileStore.IsModelAvailable(_faceDetectorModel)
+            || !ModelFileStore.IsModelAvailable(_faceRefinerModel))
+        {
+            return null;
+        }
+
+        return new FaceRefinementPipeline(_faceDetectorModel, _faceRefinerModel);
     }
 
     private void UpdateDeviceStatus(OnnxInferenceEngine engine)
@@ -1215,6 +1382,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private static bool IsSupportedVideo(string path)
         => SupportedVideoExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsModelKind(ModelDefinition model, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(model.Kind))
+        {
+            return string.Equals(kind, "upscale", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(model.Kind, kind, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUpscaleModel(ModelDefinition model) => IsModelKind(model, "upscale");
 
     private static ImageCrop? GetPreviewCrop(string path)
     {
