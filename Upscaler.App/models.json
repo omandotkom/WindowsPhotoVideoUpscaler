@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "name": "Real-ESRGAN x4plus (Qualcomm)",
+      "version": "float",
+      "scale": 4,
+      "url": "https://huggingface.co/qualcomm/Real-ESRGAN-x4plus/resolve/main/Real-ESRGAN-x4plus_float.onnx.zip",
+      "sha256": "1b764a78bc377cb14e3a6109cfed20d7c67b54659f70a016e509172075727376",
+      "size": 62330950,
+      "description": "Real-ESRGAN x4plus float ONNX (zip).",
+      "license": "Original model license: https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE. Deployable model license: DEPLOYMENT_MODEL_LICENSE.pdf in repo."
+    },
+    {
+      "name": "Fast Upscaler x2",
+      "version": "1.0",
+      "scale": 2,
+      "url": "https://example.com/models/fast-upscaler-x2.onnx",
+      "sha256": "REPLACE_WITH_SHA256",
+      "size": 0,
+      "description": "Lightweight model for quick previews (x2).",
+      "license": "RESEARCH_ONLY"
+    }
+  ]
+}

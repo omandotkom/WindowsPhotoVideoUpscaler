@@ -1,0 +1,1029 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Upscaler.App.Infrastructure;
+using Upscaler.App.Models;
+using Upscaler.App.Processing;
+
+namespace Upscaler.App.ViewModels;
+
+public sealed class MainViewModel : INotifyPropertyChanged
+{
+    private static readonly string[] SupportedExtensions = new[]
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"
+    };
+
+    private readonly ModelCatalogService _catalogService = new();
+    private readonly ModelDownloader _downloader = new();
+    private CancellationTokenSource? _downloadCts;
+    private CancellationTokenSource? _jobCts;
+
+    private ModelDefinition? _selectedModel;
+    private bool _isSelectedModelMissing;
+    private string _modelStatus = "No model selected.";
+    private ImageSource? _previewImage;
+    private string _previewInfo = "No image loaded.";
+    private string _suggestedScale = "Suggested: x2";
+    private bool _isDownloading;
+    private bool _isProcessing;
+    private bool _isScanning;
+    private double _downloadProgressPercent;
+    private double _upscaleProgressPercent;
+    private string _downloadProgressText = string.Empty;
+    private string _jobProgressText = "Idle.";
+    private string _deviceStatus = "GPU: detecting...";
+    private string _outputFolder = AppPaths.OutputPath;
+    private bool _skipDuplicates = true;
+    private string _selectedOutputFormat = "Original";
+    private int _jpegQuality = 100;
+    private string _tileSizeText = "Auto";
+    private string _tileOverlapText = "32";
+
+    public ObservableCollection<ModelDefinition> Models { get; } = new();
+    public ObservableCollection<string> SelectedFiles { get; } = new();
+    public ObservableCollection<string> RecentOutputs { get; } = new();
+
+    public ObservableCollection<int> Scales { get; } = new() { 2, 4 };
+    public ObservableCollection<string> Modes { get; } = new() { "Fast", "Quality" };
+    public ObservableCollection<string> OutputFormats { get; } = new() { "Original", "Png", "Jpeg", "Bmp", "Tiff" };
+
+    public int SelectedScale { get; set; } = 2;
+    public string SelectedMode { get; set; } = "Quality";
+
+    public ModelDefinition? SelectedModel
+    {
+        get => _selectedModel;
+        set
+        {
+            if (_selectedModel != value)
+            {
+                _selectedModel = value;
+                OnPropertyChanged();
+                UpdateModelStatus();
+                UpdateActionState();
+            }
+        }
+    }
+
+    public bool IsSelectedModelMissing
+    {
+        get => _isSelectedModelMissing;
+        private set
+        {
+            if (_isSelectedModelMissing != value)
+            {
+                _isSelectedModelMissing = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsSelectedModelAvailable));
+            }
+        }
+    }
+
+    public bool IsSelectedModelAvailable => !_isSelectedModelMissing;
+
+    public string ModelStatus
+    {
+        get => _modelStatus;
+        private set
+        {
+            if (_modelStatus != value)
+            {
+                _modelStatus = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public ImageSource? PreviewImage
+    {
+        get => _previewImage;
+        private set
+        {
+            if (_previewImage != value)
+            {
+                _previewImage = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string PreviewInfo
+    {
+        get => _previewInfo;
+        private set
+        {
+            if (_previewInfo != value)
+            {
+                _previewInfo = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string SuggestedScale
+    {
+        get => _suggestedScale;
+        private set
+        {
+            if (_suggestedScale != value)
+            {
+                _suggestedScale = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public bool IsDownloading
+    {
+        get => _isDownloading;
+        private set
+        {
+            if (_isDownloading != value)
+            {
+                _isDownloading = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsUiEnabled));
+                UpdateActionState();
+            }
+        }
+    }
+
+    public bool IsProcessing
+    {
+        get => _isProcessing;
+        private set
+        {
+            if (_isProcessing != value)
+            {
+                _isProcessing = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsUiEnabled));
+                UpdateActionState();
+            }
+        }
+    }
+
+    public bool IsScanning
+    {
+        get => _isScanning;
+        private set
+        {
+            if (_isScanning != value)
+            {
+                _isScanning = value;
+                OnPropertyChanged();
+                UpdateActionState();
+            }
+        }
+    }
+
+    public bool IsUiEnabled => !IsProcessing && !IsDownloading;
+
+    public string DeviceStatus
+    {
+        get => _deviceStatus;
+        private set
+        {
+            if (_deviceStatus != value)
+            {
+                _deviceStatus = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string OutputFolder
+    {
+        get => _outputFolder;
+        set
+        {
+            if (_outputFolder != value)
+            {
+                _outputFolder = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public bool SkipDuplicates
+    {
+        get => _skipDuplicates;
+        set
+        {
+            if (_skipDuplicates != value)
+            {
+                _skipDuplicates = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string SelectedOutputFormat
+    {
+        get => _selectedOutputFormat;
+        set
+        {
+            if (_selectedOutputFormat != value)
+            {
+                _selectedOutputFormat = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public int JpegQuality
+    {
+        get => _jpegQuality;
+        set
+        {
+            int clamped = Math.Clamp(value, 1, 100);
+            if (_jpegQuality != clamped)
+            {
+                _jpegQuality = clamped;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string TileSizeText
+    {
+        get => _tileSizeText;
+        set
+        {
+            if (_tileSizeText != value)
+            {
+                _tileSizeText = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string TileOverlapText
+    {
+        get => _tileOverlapText;
+        set
+        {
+            if (_tileOverlapText != value)
+            {
+                _tileOverlapText = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public double DownloadProgressPercent
+    {
+        get => _downloadProgressPercent;
+        private set
+        {
+            if (Math.Abs(_downloadProgressPercent - value) > 0.1)
+            {
+                _downloadProgressPercent = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public double UpscaleProgressPercent
+    {
+        get => _upscaleProgressPercent;
+        private set
+        {
+            if (Math.Abs(_upscaleProgressPercent - value) > 0.1)
+            {
+                _upscaleProgressPercent = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string DownloadProgressText
+    {
+        get => _downloadProgressText;
+        private set
+        {
+            if (_downloadProgressText != value)
+            {
+                _downloadProgressText = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public string JobProgressText
+    {
+        get => _jobProgressText;
+        private set
+        {
+            if (_jobProgressText != value)
+            {
+                _jobProgressText = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public AsyncRelayCommand OpenFilesCommand { get; }
+    public AsyncRelayCommand OpenFolderCommand { get; }
+    public RelayCommand BrowseOutputFolderCommand { get; }
+    public AsyncRelayCommand DownloadModelCommand { get; }
+    public AsyncRelayCommand RedownloadModelCommand { get; }
+    public AsyncRelayCommand PreviewCommand { get; }
+    public AsyncRelayCommand UpscaleCommand { get; }
+    public RelayCommand CancelCommand { get; }
+
+    public MainViewModel()
+    {
+        DeviceStatus = $"GPU: {DeviceInfoService.GetPrimaryGpuName()}";
+
+        OpenFilesCommand = new AsyncRelayCommand(OpenFilesAsync, () => !IsProcessing && !IsScanning);
+        OpenFolderCommand = new AsyncRelayCommand(OpenFolderAsync, () => !IsProcessing && !IsScanning);
+        BrowseOutputFolderCommand = new RelayCommand(BrowseOutputFolder, () => !IsProcessing);
+        DownloadModelCommand = new AsyncRelayCommand(DownloadModelAsync, CanDownloadModel);
+        RedownloadModelCommand = new AsyncRelayCommand(RedownloadModelAsync, CanRedownloadModel);
+        PreviewCommand = new AsyncRelayCommand(PreviewAsync, CanPreview);
+        UpscaleCommand = new AsyncRelayCommand(UpscaleAsync, CanUpscale);
+        CancelCommand = new RelayCommand(CancelAll, () => IsDownloading || IsProcessing);
+
+        SelectedFiles.CollectionChanged += (_, _) => UpdateActionState();
+    }
+
+    public async Task LoadAsync()
+    {
+        ModelCatalog catalog = await _catalogService.LoadAsync();
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            Models.Clear();
+            foreach (ModelDefinition model in catalog.Models)
+            {
+                Models.Add(model);
+            }
+        });
+
+        if (Models.Count > 0)
+        {
+            SelectedModel = Models[0];
+        }
+    }
+
+    public void AddFiles(IEnumerable<string> paths)
+    {
+        _ = AddFilesAsync(paths);
+    }
+
+    public async Task AddFilesAsync(IEnumerable<string> paths)
+    {
+        if (IsScanning)
+        {
+            return;
+        }
+
+        IsScanning = true;
+        HashSet<string> existing = new(SelectedFiles, StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            (List<string> files, int skipped) = await Task.Run(() =>
+            {
+                List<string> found = new();
+                int skippedCount = 0;
+                foreach (string path in paths)
+                {
+                    if (File.Exists(path))
+                    {
+                        if (IsSupported(path))
+                        {
+                            found.Add(path);
+                        }
+                        else
+                        {
+                            skippedCount++;
+                        }
+                    }
+                    else if (Directory.Exists(path))
+                    {
+                        found.AddRange(EnumerateImages(path));
+                    }
+                }
+
+                return (found, skippedCount);
+            });
+
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                if (files.Count == 0)
+                {
+                    if (SelectedFiles.Count == 0)
+                    {
+                        UpscaleProgressPercent = 0;
+                    }
+                    if (skipped > 0)
+                    {
+                        JobProgressText = $"Skipped {skipped} unsupported file(s).";
+                    }
+                    return;
+                }
+
+                UpscaleProgressPercent = 0;
+                files.Sort(StringComparer.OrdinalIgnoreCase);
+                foreach (string file in files)
+                {
+                    if (!existing.Contains(file))
+                    {
+                        SelectedFiles.Add(file);
+                    }
+                }
+
+                LoadPreview(files[0]);
+                string? baseDir = Path.GetDirectoryName(files[0]);
+                if (!string.IsNullOrWhiteSpace(baseDir))
+                {
+                    OutputFolder = baseDir;
+                }
+                JobProgressText = skipped > 0
+                    ? $"Loaded {SelectedFiles.Count} image(s), skipped {skipped} unsupported."
+                    : $"Loaded {SelectedFiles.Count} image(s).";
+            });
+        }
+        finally
+        {
+            IsScanning = false;
+        }
+    }
+
+    private async Task OpenFilesAsync()
+    {
+        Microsoft.Win32.OpenFileDialog dialog = new()
+        {
+            Multiselect = true,
+            Filter = "Images|*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.tiff"
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            await AddFilesAsync(dialog.FileNames);
+        }
+    }
+
+    private async Task OpenFolderAsync()
+    {
+        using System.Windows.Forms.FolderBrowserDialog dialog = new();
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            await AddFilesAsync(new[] { dialog.SelectedPath });
+        }
+    }
+
+    private void BrowseOutputFolder()
+    {
+        using System.Windows.Forms.FolderBrowserDialog dialog = new();
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            OutputFolder = dialog.SelectedPath;
+        }
+    }
+
+    private async Task DownloadModelAsync()
+    {
+        if (SelectedModel == null)
+        {
+            return;
+        }
+
+        try
+        {
+            IsDownloading = true;
+            DownloadProgressText = "Starting download...";
+            DownloadProgressPercent = 0;
+            _downloadCts = new CancellationTokenSource();
+
+            Progress<DownloadProgress> progress = new(p =>
+            {
+                if (p.TotalBytes.HasValue && p.TotalBytes.Value > 0)
+                {
+                    DownloadProgressPercent = (double)p.BytesReceived / p.TotalBytes.Value * 100;
+                    DownloadProgressText = $"{FormatSize(p.BytesReceived)} / {FormatSize(p.TotalBytes.Value)}";
+                }
+                else
+                {
+                    DownloadProgressText = $"{FormatSize(p.BytesReceived)} downloaded";
+                }
+            });
+
+            await Task.Run(
+                () => _downloader.DownloadAsync(SelectedModel, progress, _downloadCts.Token),
+                _downloadCts.Token);
+            UpdateModelStatus();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Model download failed.", ex);
+            DownloadProgressText = $"Download failed: {ex.Message}";
+        }
+        finally
+        {
+            IsDownloading = false;
+            _downloadCts = null;
+        }
+    }
+
+    private async Task RedownloadModelAsync()
+    {
+        if (SelectedModel == null)
+        {
+            return;
+        }
+
+        try
+        {
+            DeleteModelFiles(SelectedModel);
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"Failed to delete existing model files: {ex.Message}");
+        }
+
+        UpdateModelStatus();
+        await DownloadModelAsync();
+    }
+
+    private async Task PreviewAsync()
+    {
+        if (!CanPreview())
+        {
+            return;
+        }
+
+        string input = SelectedFiles[0];
+        ImageCrop? crop = GetPreviewCrop(input);
+
+        OnnxInferenceEngine? engine = null;
+        try
+        {
+            IsProcessing = true;
+            UpscaleProgressPercent = 0;
+            JobProgressText = "Generating preview...";
+            PreviewInfo = "Loading preview...";
+            _jobCts = new CancellationTokenSource();
+
+            string previewFolder = AppPaths.CachePath;
+            Directory.CreateDirectory(previewFolder);
+
+            ImagePipeline pipeline = CreatePipeline(out engine);
+            UpscaleRequest request = new()
+            {
+                InputFiles = new List<string> { input },
+                OutputFolder = previewFolder,
+                Scale = SelectedScale,
+                Mode = SelectedMode,
+                Model = SelectedModel,
+                TileSize = 0,
+                TileOverlap = 0,
+                OutputFormat = "Png",
+                JpegQuality = JpegQuality,
+                PreviewCrop = crop
+            };
+
+            UpscaleResult result = await Task.Run(
+                () => pipeline.UpscaleAsync(request, null, _jobCts.Token),
+                _jobCts.Token);
+            if (result.OutputFiles.Count > 0)
+            {
+                LoadPreview(result.OutputFiles[0]);
+                PreviewInfo = crop == null
+                    ? PreviewInfo
+                    : $"Preview crop {crop.Width} x {crop.Height}";
+            }
+
+            if (engine != null)
+            {
+                UpdateDeviceStatus(engine);
+            }
+            JobProgressText = "Preview completed.";
+        }
+        catch (OperationCanceledException)
+        {
+            JobProgressText = "Preview canceled.";
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Preview failed.", ex);
+            JobProgressText = $"Preview failed: {ex.Message}";
+        }
+        finally
+        {
+            IsProcessing = false;
+            _jobCts = null;
+            engine?.Dispose();
+        }
+    }
+
+    private async Task UpscaleAsync()
+    {
+        if (!CanUpscale())
+        {
+            return;
+        }
+
+        List<string> inputs = SelectedFiles.ToList();
+        inputs.Sort(StringComparer.OrdinalIgnoreCase);
+
+        UpscaleProgressPercent = 0;
+
+        if (SkipDuplicates)
+        {
+            inputs = FilterDuplicates(inputs, out int skipped);
+            if (skipped > 0)
+            {
+                JobProgressText = $"Skipped {skipped} duplicate file(s).";
+            }
+        }
+
+        if (inputs.Count == 0)
+        {
+            JobProgressText = "No files to upscale.";
+            return;
+        }
+
+        string outputFolder = ResolveOutputFolder(inputs.Count);
+        Directory.CreateDirectory(outputFolder);
+
+        OnnxInferenceEngine? engine = null;
+        try
+        {
+            IsProcessing = true;
+            UpscaleProgressPercent = 0;
+            _jobCts = new CancellationTokenSource();
+            Stopwatch stopwatch = Stopwatch.StartNew();
+
+            ImagePipeline pipeline = CreatePipeline(out engine);
+            Progress<UpscaleProgress> progress = new(p =>
+            {
+                double avgSeconds = p.CurrentIndex > 0 ? stopwatch.Elapsed.TotalSeconds / p.CurrentIndex : 0;
+                double remaining = Math.Max(0, p.Total - p.CurrentIndex);
+                TimeSpan eta = TimeSpan.FromSeconds(avgSeconds * remaining);
+                string tileText = p.TileTotal > 0 ? $" (Tile {p.TileIndex}/{p.TileTotal})" : string.Empty;
+                JobProgressText = $"Image {p.CurrentIndex}/{p.Total}{tileText} - {p.Message} - ETA {eta:mm\\:ss}";
+                if (p.OverallPercent > 0)
+                {
+                    UpscaleProgressPercent = p.OverallPercent;
+                }
+            });
+
+            int tileSize = ResolveTileSize(inputs);
+            int tileOverlap = ResolveTileOverlap();
+            UpscaleRequest request = new()
+            {
+                InputFiles = inputs,
+                OutputFolder = outputFolder,
+                Scale = SelectedScale,
+                Mode = SelectedMode,
+                Model = SelectedModel,
+                TileSize = tileSize,
+                TileOverlap = tileOverlap,
+                SkipDuplicates = SkipDuplicates,
+                OutputFormat = SelectedOutputFormat,
+                JpegQuality = JpegQuality
+            };
+
+            UpscaleResult result = await Task.Run(
+                () => pipeline.UpscaleAsync(request, progress, _jobCts.Token),
+                _jobCts.Token);
+            if (engine != null)
+            {
+                UpdateDeviceStatus(engine);
+            }
+            UpdateRecentOutputs(result.OutputFiles);
+            JobProgressText = $"Upscale completed. Saved {result.OutputFiles.Count} file(s).";
+            UpscaleProgressPercent = 100;
+        }
+        catch (OperationCanceledException)
+        {
+            JobProgressText = "Upscale canceled.";
+            UpscaleProgressPercent = 0;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Upscale failed.", ex);
+            JobProgressText = $"Upscale failed: {ex.Message}";
+            UpscaleProgressPercent = 0;
+        }
+        finally
+        {
+            IsProcessing = false;
+            _jobCts = null;
+            engine?.Dispose();
+        }
+    }
+
+    private void CancelAll()
+    {
+        if (IsDownloading)
+        {
+            _downloadCts?.Cancel();
+            DownloadProgressText = "Download canceled.";
+        }
+
+        if (IsProcessing)
+        {
+            _jobCts?.Cancel();
+            UpscaleProgressPercent = 0;
+        }
+    }
+
+    private bool CanDownloadModel() => SelectedModel != null && IsSelectedModelMissing && !IsDownloading && !IsProcessing;
+
+    private bool CanRedownloadModel() => SelectedModel != null && IsSelectedModelAvailable && !IsDownloading && !IsProcessing;
+
+    private bool CanPreview() => SelectedFiles.Count > 0 && SelectedModel != null && !IsSelectedModelMissing && !IsProcessing && !IsDownloading;
+
+    private bool CanUpscale() => SelectedFiles.Count > 0 && SelectedModel != null && !IsSelectedModelMissing && !IsProcessing && !IsDownloading;
+
+    private void UpdateModelStatus()
+    {
+        if (SelectedModel == null)
+        {
+            ModelStatus = "No model selected.";
+            IsSelectedModelMissing = true;
+            return;
+        }
+
+        bool available = ModelFileStore.IsModelAvailable(SelectedModel);
+        IsSelectedModelMissing = !available;
+        ModelStatus = available ? "Ready (local model found)." : "Missing model. Download required.";
+        UpdateActionState();
+    }
+
+    private static void DeleteModelFiles(ModelDefinition model)
+    {
+        string modelPath = ModelFileStore.GetModelFilePath(model);
+        string metadataPath = ModelFileStore.GetMetadataPath(modelPath);
+        string? dir = Path.GetDirectoryName(modelPath);
+
+        if (File.Exists(modelPath))
+        {
+            File.Delete(modelPath);
+        }
+
+        if (File.Exists(metadataPath))
+        {
+            File.Delete(metadataPath);
+        }
+
+        string zipPath = modelPath + ".zip";
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(dir))
+        {
+            string dataPath = Path.Combine(dir, "model.data");
+            if (File.Exists(dataPath))
+            {
+                File.Delete(dataPath);
+            }
+        }
+
+        Processing.OnnxInferenceEngine.ClearCachedSession(modelPath);
+    }
+
+    private void UpdateActionState()
+    {
+        OpenFilesCommand.RaiseCanExecuteChanged();
+        OpenFolderCommand.RaiseCanExecuteChanged();
+        BrowseOutputFolderCommand.RaiseCanExecuteChanged();
+        DownloadModelCommand.RaiseCanExecuteChanged();
+        RedownloadModelCommand.RaiseCanExecuteChanged();
+        PreviewCommand.RaiseCanExecuteChanged();
+        UpscaleCommand.RaiseCanExecuteChanged();
+        CancelCommand.RaiseCanExecuteChanged();
+    }
+
+    private void LoadPreview(string filePath)
+    {
+        _ = LoadPreviewAsync(filePath);
+    }
+
+    private async Task LoadPreviewAsync(string filePath)
+    {
+        try
+        {
+            (BitmapImage image, string info, string suggested) = await Task.Run(() =>
+            {
+                BitmapImage bmp = new();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(filePath);
+                bmp.EndInit();
+                bmp.Freeze();
+                string infoText = $"{bmp.PixelWidth} x {bmp.PixelHeight}";
+                string suggestion = bmp.PixelWidth < 1600 || bmp.PixelHeight < 1600 ? "Suggested: x2" : "Suggested: x4";
+                return (bmp, infoText, suggestion);
+            });
+
+            PreviewImage = image;
+            PreviewInfo = info;
+            SuggestedScale = suggested;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"Failed to load preview: {ex.Message}");
+            PreviewInfo = "Preview unavailable.";
+        }
+    }
+
+    private ImagePipeline CreatePipeline(out OnnxInferenceEngine engine)
+    {
+        if (SelectedModel == null)
+        {
+            throw new InvalidOperationException("No model selected.");
+        }
+
+        WicImagePreprocessor preprocessor = new();
+        SimpleTileSplitter splitter = new();
+        engine = new OnnxInferenceEngine(SelectedModel);
+        WeightedTileMerger merger = new();
+        WicImagePostprocessor postprocessor = new();
+        return new ImagePipeline(preprocessor, splitter, engine, merger, postprocessor);
+    }
+
+    private void UpdateDeviceStatus(OnnxInferenceEngine engine)
+    {
+        DeviceStatus = engine.UsingCpuFallback
+            ? "CPU fallback (no DirectML device)"
+            : $"GPU: {DeviceInfoService.GetPrimaryGpuName()}";
+    }
+
+    private static IEnumerable<string> EnumerateImages(string folder)
+    {
+        foreach (string file in Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories))
+        {
+            if (IsSupported(file))
+            {
+                yield return file;
+            }
+        }
+    }
+
+    private static bool IsSupported(string path)
+        => SupportedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    private static ImageCrop? GetPreviewCrop(string path)
+    {
+        try
+        {
+            using FileStream stream = File.OpenRead(path);
+            BitmapDecoder decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            BitmapFrame frame = decoder.Frames[0];
+            int width = frame.PixelWidth;
+            int height = frame.PixelHeight;
+            int size = Math.Min(256, Math.Min(width, height));
+            if (size <= 0)
+            {
+                return null;
+            }
+
+            int x = Math.Max(0, (width - size) / 2);
+            int y = Math.Max(0, (height - size) / 2);
+            return new ImageCrop { X = x, Y = y, Width = size, Height = size };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private string ResolveOutputFolder(int count)
+    {
+        string baseFolder = string.IsNullOrWhiteSpace(OutputFolder) ? AppPaths.OutputPath : OutputFolder;
+        if (count > 1)
+        {
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            return Path.Combine(baseFolder, timestamp);
+        }
+
+        return baseFolder;
+    }
+
+    private static List<string> FilterDuplicates(List<string> files, out int skipped)
+    {
+        Dictionary<string, string> seen = new(StringComparer.OrdinalIgnoreCase);
+        List<string> unique = new();
+        skipped = 0;
+
+        foreach (string file in files)
+        {
+            string hash = HashUtils.ComputeSha256(file);
+            if (seen.ContainsKey(hash))
+            {
+                skipped++;
+                continue;
+            }
+
+            seen[hash] = file;
+            unique.Add(file);
+        }
+
+        return unique;
+    }
+
+    private void UpdateRecentOutputs(IReadOnlyList<string> outputs)
+    {
+        foreach (string output in outputs)
+        {
+            if (!RecentOutputs.Contains(output))
+            {
+                RecentOutputs.Insert(0, output);
+            }
+        }
+    }
+
+    private int GetAutoTileSize(int count)
+    {
+        if (SelectedMode.Equals("Fast", StringComparison.OrdinalIgnoreCase))
+        {
+            return 256;
+        }
+
+        return count > 1 ? 512 : 768;
+    }
+
+    private int ResolveTileSize(IReadOnlyList<string> inputs)
+    {
+        if (int.TryParse(TileSizeText, out int size) && size > 0)
+        {
+            return size;
+        }
+
+        int maxPixels = 0;
+        foreach (string path in inputs)
+        {
+            try
+            {
+                using FileStream stream = File.OpenRead(path);
+                BitmapDecoder decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                BitmapFrame frame = decoder.Frames[0];
+                int pixels = frame.PixelWidth * frame.PixelHeight;
+                if (pixels > maxPixels)
+                {
+                    maxPixels = pixels;
+                }
+            }
+            catch
+            {
+                // Ignore files that fail to probe; fallback to default size.
+            }
+        }
+
+        if (maxPixels >= 8000 * 8000)
+        {
+            return 256;
+        }
+
+        if (maxPixels >= 4000 * 4000)
+        {
+            return 512;
+        }
+
+        return GetAutoTileSize(inputs.Count);
+    }
+
+    private int ResolveTileOverlap()
+    {
+        if (int.TryParse(TileOverlapText, out int overlap) && overlap >= 0)
+        {
+            return overlap;
+        }
+
+        return 32;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB" };
+        double size = bytes;
+        int unit = 0;
+        while (size >= 1024 && unit < units.Length - 1)
+        {
+            size /= 1024;
+            unit++;
+        }
+
+        return $"{size:0.##} {units[unit]}";
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}

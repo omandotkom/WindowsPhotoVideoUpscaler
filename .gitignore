@@ -1,0 +1,27 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.nupkg
+*.snupkg
+*.pdb
+*.cache
+AGENTS.md
+
+# App data and outputs
+AppData/
+**/AppData/
+output/
+cache/
+logs/
+
+# Models (never commit)
+models/
+**/models/
+*.onnx
+*.onnx.zip
+*.data
