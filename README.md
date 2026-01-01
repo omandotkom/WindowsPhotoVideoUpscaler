@@ -2,6 +2,9 @@
 
 Prototype Windows photo/video upscaler built with WPF, ONNX Runtime, and DirectML.
 
+## Quick start (no build)
+Download the latest release and extract `Upscaler-win-x64.zip`, then run `Upscaler.App.exe`.
+
 ## Features
 - WPF desktop UI with drag-and-drop, Open Files/Folder, recursive scan, and recent outputs list.
 - Model ComboBox from `models.json` with download/redownload, resume support, SHA256 validation, and metadata JSON.
