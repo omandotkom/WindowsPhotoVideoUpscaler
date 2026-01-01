@@ -1,17 +1,34 @@
-# Windows Photo Upscaler
+# Windows Photo & Video Upscaler
 
-Prototype Windows photo upscaler built with WPF, ONNX Runtime, and DirectML.
+Prototype Windows photo/video upscaler built with WPF, ONNX Runtime, and DirectML.
 
 ## Features
-- WPF desktop UI with drag-and-drop, Open button, and recursive folder picking.
-- Model ComboBox from catalog with in-app download, SHA256 verification, and retry.
-- DirectML GPU inference with device name shown; CPU fallback with warning.
-- Preview on a small crop for quick quality checks.
-- Tiling with overlap and seam blending; progress with ETA and cancel.
-- Scale selection (x2/x4) plus Fast/Quality mode.
-- Output format and JPEG quality control.
-- EXIF copy for JPEG/TIFF outputs.
-- AppData layout and daily rolling logs.
+- WPF desktop UI with drag-and-drop, Open Files/Folder, recursive scan, and recent outputs list.
+- Model ComboBox from `models.json` with download/redownload, resume support, SHA256 validation, and metadata JSON.
+- DirectML GPU inference with device name shown and CPU fallback when unavailable.
+- Preview on a small center crop with dimension readout and suggested scale (x2/x4).
+- Configurable scale, mode, quality preset, denoise/temporal smoothing, tiling, output format, and JPEG quality.
+- Batch processing with per-tile progress, ETA, cancel, and optional duplicate skipping by SHA256.
+
+## Image upscaling details
+- Supported input formats: jpg, jpeg, png, webp, bmp, tiff.
+- Preview uses a center crop (up to 256x256) and writes preview output to `AppData/cache/`.
+- Tiling auto-sizes based on image resolution; manual tile size/overlap available.
+- Weighted seam blending reduces tile edges; overlap scales with output.
+- Output formats: Original, PNG, JPEG, BMP, TIFF with optional EXIF copy for JPEG/TIFF.
+
+## Video upscaling details
+- Supported formats: mp4, mov, mkv, avi, webm, 3gp (requires FFmpeg).
+- FFmpeg is auto-downloaded on first launch into `AppData/ffmpeg/` with a progress popup.
+- Videos are decoded to frames in `AppData/cache/`, upscaled, then re-encoded with audio preserved when possible.
+- Hardware decode option plus encoder choices (libx264, NVENC, AMF, QSV) with mpeg4 fallback.
+- Progress is shown per phase: decode, upscale, encode.
+
+## Model management
+- Catalog source: `Upscaler.App/models.json` with name, version, scale, url, sha256, size, description, license.
+- Downloads retry up to 3 times with exponential backoff and resume when supported.
+- Zip models extract `.onnx` and optional `.data` weights into `AppData/models/`.
+- A metadata JSON file is written alongside each downloaded model.
 
 ## Requirements
 - Windows 10/11
@@ -89,11 +106,22 @@ scripts/setup-ffmpeg-debug.ps1
 4) Preview to test quality (uses a small center crop).
 5) Upscale the full image set.
 
+## Settings reference
+- Scale: x2 or x4 (model scale overrides manual selection when fixed).
+- Mode: Fast or Quality (affects default tile size in auto mode).
+- Quality preset: "Clean + Sharp" enables denoise + temporal smoothing.
+- Denoise: simple box blur pre-pass with strength slider (0 to 0.5 UI range).
+- Temporal smoothing: blends with previous output frame/ image (useful for video).
+- Tiling: Auto picks size by resolution; Advanced allows manual tile size/overlap.
+- Output format: Original, PNG, JPEG, BMP, TIFF.
+- Video options: hardware decode toggle and encoder selection.
+
 ## Output behavior
 - Default output folder: folder of the selected file or folder.
 - Batch runs (more than 1 file) output into a timestamp subfolder.
-- Default output naming: `<original>_upscaled_x{scale}.{ext}`.
-- Supported input formats: jpg, jpeg, png, webp, bmp, tiff.
+- Image output naming: `<original>_upscaled.{ext}` (Original preserves supported ext).
+- Video output naming: `<original>_upscaled_x{scale}.{ext}` (3gp outputs as mp4).
+- Mixed images and videos cannot be processed in a single run.
 
 ## Video acceleration
 - Video decode defaults to CPU; you can enable hardware decode in Settings.
@@ -116,7 +144,9 @@ Events logged:
 
 ## Troubleshooting
 - If DirectML is unavailable, the app falls back to CPU and logs a warning.
-- If a model fails to load, use the Redownload button to refresh it.
+- If a model download fails due to SHA256 mismatch, use Redownload.
+- If FFmpeg is missing, the app shows a download popup on launch and video upscaling is disabled until available.
+- If FFmpeg is installed but not found, place `ffmpeg.exe`/`ffprobe.exe` next to the app or in `AppData/ffmpeg/`.
 - If build fails because the app is running, close the app and rebuild.
 
 ## Manual smoke checklist
