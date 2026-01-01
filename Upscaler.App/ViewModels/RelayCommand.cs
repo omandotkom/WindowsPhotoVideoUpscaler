@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Input;
+using Upscaler.App.Infrastructure;
 
 namespace Upscaler.App.ViewModels;
 
@@ -18,7 +19,17 @@ public sealed class RelayCommand : ICommand
 
     public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
 
-    public void Execute(object? parameter) => _execute();
+    public void Execute(object? parameter)
+    {
+        try
+        {
+            _execute();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Unhandled command execution error.", ex);
+        }
+    }
 
     public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }

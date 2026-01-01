@@ -14,6 +14,23 @@ public static class OutputNaming
         return Path.Combine(outputFolder, fileName);
     }
 
+    public static string BuildVideoOutputPath(string inputPath, string outputFolder, int scale)
+    {
+        string name = Path.GetFileNameWithoutExtension(inputPath);
+        string ext = Path.GetExtension(inputPath);
+        if (string.IsNullOrWhiteSpace(ext))
+        {
+            ext = ".mp4";
+        }
+        else if (ext.Equals(".3gp", StringComparison.OrdinalIgnoreCase))
+        {
+            ext = ".mp4";
+        }
+
+        string fileName = $"{name}_upscaled_x{scale}{ext}";
+        return Path.Combine(outputFolder, fileName);
+    }
+
     private static string ResolveExtension(string inputPath, string format)
     {
         if (!string.Equals(format, "Original", StringComparison.OrdinalIgnoreCase))

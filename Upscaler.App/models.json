@@ -11,6 +11,16 @@
       "license": "Original model license: https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE. Deployable model license: DEPLOYMENT_MODEL_LICENSE.pdf in repo."
     },
     {
+      "name": "4x-UltraSharp (ONNX)",
+      "version": "1.0",
+      "scale": 4,
+      "url": "https://huggingface.co/ofter/4x-UltraSharp/resolve/main/4x-UltraSharp.onnx",
+      "sha256": "c1178a4d6c7de327eae3b8c24886555592432fd1f29ae1fb85d765f120d8ce3c",
+      "size": 66938049,
+      "description": "4x-UltraSharp ONNX from ofter/4x-UltraSharp.",
+      "license": "artistic-2.0"
+    },
+    {
       "name": "Fast Upscaler x2",
       "version": "1.0",
       "scale": 2,

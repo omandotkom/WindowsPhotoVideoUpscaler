@@ -39,6 +39,7 @@ public sealed class ImagePipeline
         }
 
         List<string> outputs = new();
+        ImageTensor? previousOutput = null;
         for (int i = 0; i < request.InputFiles.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -55,7 +56,7 @@ public sealed class ImagePipeline
             });
 
             AppLogger.Info($"Upscale started: {input}");
-            ImageTensor image = await _preprocessor.LoadAsync(input, request.PreviewCrop, cancellationToken);
+            ImageTensor image = await _preprocessor.LoadAsync(input, request.PreviewCrop, request.DenoiseStrength, cancellationToken);
             int tileSize = request.TileSize ?? 0;
             if (_inference.PreferredTileSize.HasValue)
             {
@@ -84,6 +85,19 @@ public sealed class ImagePipeline
             int outputWidth = image.Width * request.Scale;
             int outputHeight = image.Height * request.Scale;
             ImageTensor merged = _merger.Merge(outputsTiles, outputWidth, outputHeight, request.TileOverlap * request.Scale);
+            ImageTensor outputImage = merged;
+            if (request.EnableTemporalBlend && previousOutput != null)
+            {
+                float alpha = (float)Math.Clamp(request.TemporalBlendStrength, 0.0, 1.0);
+                if (alpha > 0 && previousOutput.Data.Length == merged.Data.Length)
+                {
+                    outputImage = BlendWithPrevious(merged, previousOutput, alpha);
+                }
+                else if (previousOutput.Data.Length != merged.Data.Length)
+                {
+                    AppLogger.Warn("Temporal blend skipped due to mismatched frame sizes.");
+                }
+            }
 
             string outputPath = OutputNaming.BuildOutputPath(input, request.OutputFolder, request.Scale, request.OutputFormat);
             string resolvedFormat = System.IO.Path.GetExtension(outputPath).TrimStart('.');
@@ -95,11 +109,30 @@ public sealed class ImagePipeline
                 SourceMetadata = image.Metadata,
                 SourcePath = input
             };
-            await _postprocessor.SaveAsync(merged, options, cancellationToken);
+            await _postprocessor.SaveAsync(outputImage, options, cancellationToken);
             outputs.Add(outputPath);
+            previousOutput = outputImage;
             AppLogger.Info($"Upscale finished: {outputPath}");
         }
 
         return new UpscaleResult { OutputFiles = outputs };
+    }
+
+    private static ImageTensor BlendWithPrevious(ImageTensor current, ImageTensor previous, float alpha)
+    {
+        float[] blended = new float[current.Data.Length];
+        float invAlpha = 1f - alpha;
+        for (int i = 0; i < blended.Length; i++)
+        {
+            blended[i] = current.Data[i] * invAlpha + previous.Data[i] * alpha;
+        }
+
+        return new ImageTensor
+        {
+            Width = current.Width,
+            Height = current.Height,
+            Data = blended,
+            Metadata = current.Metadata
+        };
     }
 }

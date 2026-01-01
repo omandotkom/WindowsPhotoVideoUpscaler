@@ -25,3 +25,6 @@ models/
 *.onnx
 *.onnx.zip
 *.data
+
+# Build artifacts
+dist/

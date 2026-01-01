@@ -1,0 +1,12 @@
+Third-Party Notices
+===================
+
+This product bundles FFmpeg under the LGPL.
+
+FFmpeg
+------
+License: LGPL 2.1 or later
+Source: https://ffmpeg.org/download.html
+Bundled builds: https://github.com/BtbN/FFmpeg-Builds/releases
+
+If you modify or replace the bundled FFmpeg binaries, ensure they remain LGPL-compliant.

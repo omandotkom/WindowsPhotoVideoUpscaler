@@ -12,6 +12,7 @@ public static class AppPaths
     public static string ModelsPath { get; } = Path.Combine(BasePath, "models");
     public static string CachePath { get; } = Path.Combine(BasePath, "cache");
     public static string LogsPath { get; } = Path.Combine(BasePath, "logs");
+    public static string FfmpegPath { get; } = Path.Combine(BasePath, "ffmpeg");
     public static string OutputPath { get; } = ResolveOutputPath();
 
     public static void EnsureCreated()
@@ -20,6 +21,7 @@ public static class AppPaths
         Directory.CreateDirectory(ModelsPath);
         Directory.CreateDirectory(CachePath);
         Directory.CreateDirectory(LogsPath);
+        Directory.CreateDirectory(FfmpegPath);
         Directory.CreateDirectory(OutputPath);
     }
 

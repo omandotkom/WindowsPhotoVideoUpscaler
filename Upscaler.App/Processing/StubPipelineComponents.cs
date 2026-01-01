@@ -7,7 +7,7 @@ namespace Upscaler.App.Processing;
 
 public sealed class StubPreprocessor : IImagePreprocessor
 {
-    public Task<ImageTensor> LoadAsync(string path, ImageCrop? crop, CancellationToken cancellationToken)
+    public Task<ImageTensor> LoadAsync(string path, ImageCrop? crop, double denoiseStrength, CancellationToken cancellationToken)
         => throw new NotSupportedException("Preprocessing not implemented yet.");
 }
 

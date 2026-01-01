@@ -6,7 +6,7 @@ namespace Upscaler.App.Processing;
 
 public interface IImagePreprocessor
 {
-    Task<ImageTensor> LoadAsync(string path, ImageCrop? crop, CancellationToken cancellationToken);
+    Task<ImageTensor> LoadAsync(string path, ImageCrop? crop, double denoiseStrength, CancellationToken cancellationToken);
 }
 
 public interface ITileSplitter

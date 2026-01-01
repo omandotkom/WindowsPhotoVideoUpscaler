@@ -18,9 +18,14 @@ namespace Upscaler.App.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged
 {
-    private static readonly string[] SupportedExtensions = new[]
+    private static readonly string[] SupportedImageExtensions = new[]
     {
         ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"
+    };
+
+    private static readonly string[] SupportedVideoExtensions = new[]
+    {
+        ".mp4", ".mov", ".mkv", ".avi", ".webm", ".3gp"
     };
 
     private readonly ModelCatalogService _catalogService = new();
@@ -48,6 +53,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private int _jpegQuality = 100;
     private string _tileSizeText = "Auto";
     private string _tileOverlapText = "32";
+    private bool _enableDenoise;
+    private double _denoiseStrength = 0.12;
+    private string _selectedQualityPreset = "Custom";
+    private bool _enableTemporalBlend;
+    private double _temporalBlendStrength = 0.15;
+    private bool _useHardwareDecode;
+    private double _videoDecodePercent;
+    private double _videoUpscalePercent;
+    private double _videoEncodePercent;
+    private int _selectedScale = 2;
 
     public ObservableCollection<ModelDefinition> Models { get; } = new();
     public ObservableCollection<string> SelectedFiles { get; } = new();
@@ -56,9 +71,39 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<int> Scales { get; } = new() { 2, 4 };
     public ObservableCollection<string> Modes { get; } = new() { "Fast", "Quality" };
     public ObservableCollection<string> OutputFormats { get; } = new() { "Original", "Png", "Jpeg", "Bmp", "Tiff" };
+    public ObservableCollection<string> VideoEncoders { get; } = new()
+    {
+        "CPU (libx264)",
+        "NVIDIA NVENC (h264)",
+        "AMD AMF (h264)",
+        "Intel QSV (h264)"
+    };
+    public ObservableCollection<string> QualityPresets { get; } = new()
+    {
+        "Custom",
+        "Clean + Sharp"
+    };
 
-    public int SelectedScale { get; set; } = 2;
+    public int SelectedScale
+    {
+        get => _selectedScale;
+        set
+        {
+            int resolved = value;
+            if (SelectedModel?.Scale > 0)
+            {
+                resolved = SelectedModel.Scale;
+            }
+
+            if (_selectedScale != resolved)
+            {
+                _selectedScale = resolved;
+                OnPropertyChanged();
+            }
+        }
+    }
     public string SelectedMode { get; set; } = "Quality";
+    public string SelectedVideoEncoder { get; set; } = "CPU (libx264)";
 
     public ModelDefinition? SelectedModel
     {
@@ -70,6 +115,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 _selectedModel = value;
                 OnPropertyChanged();
                 UpdateModelStatus();
+                SyncSelectedScaleToModel();
                 UpdateActionState();
             }
         }
@@ -255,6 +301,104 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    public string SelectedQualityPreset
+    {
+        get => _selectedQualityPreset;
+        set
+        {
+            if (_selectedQualityPreset != value)
+            {
+                _selectedQualityPreset = value;
+                OnPropertyChanged();
+                ApplyQualityPreset(value);
+            }
+        }
+    }
+
+    public bool EnableDenoise
+    {
+        get => _enableDenoise;
+        set
+        {
+            if (_enableDenoise != value)
+            {
+                _enableDenoise = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsDenoiseEnabled));
+            }
+        }
+    }
+
+    public bool IsDenoiseEnabled => EnableDenoise;
+
+    public double DenoiseStrength
+    {
+        get => _denoiseStrength;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.0, 1.0);
+            if (Math.Abs(_denoiseStrength - clamped) > 0.0001)
+            {
+                _denoiseStrength = clamped;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public bool EnableTemporalBlend
+    {
+        get => _enableTemporalBlend;
+        set
+        {
+            if (_enableTemporalBlend != value)
+            {
+                _enableTemporalBlend = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsTemporalBlendEnabled));
+            }
+        }
+    }
+
+    public bool IsTemporalBlendEnabled => EnableTemporalBlend;
+
+    public double TemporalBlendStrength
+    {
+        get => _temporalBlendStrength;
+        set
+        {
+            double clamped = Math.Clamp(value, 0.0, 1.0);
+            if (Math.Abs(_temporalBlendStrength - clamped) > 0.0001)
+            {
+                _temporalBlendStrength = clamped;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    private void ApplyQualityPreset(string preset)
+    {
+        if (string.Equals(preset, "Clean + Sharp", StringComparison.OrdinalIgnoreCase))
+        {
+            EnableDenoise = true;
+            DenoiseStrength = 0.12;
+            EnableTemporalBlend = true;
+            TemporalBlendStrength = 0.08;
+        }
+    }
+
+    public bool UseHardwareDecode
+    {
+        get => _useHardwareDecode;
+        set
+        {
+            if (_useHardwareDecode != value)
+            {
+                _useHardwareDecode = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     public string TileSizeText
     {
         get => _tileSizeText;
@@ -398,20 +542,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 int skippedCount = 0;
                 foreach (string path in paths)
                 {
-                    if (File.Exists(path))
+                    try
                     {
-                        if (IsSupported(path))
+                        if (File.Exists(path))
                         {
-                            found.Add(path);
+                            if (IsSupportedImage(path) || IsSupportedVideo(path))
+                            {
+                                found.Add(path);
+                            }
+                            else
+                            {
+                                skippedCount++;
+                            }
                         }
-                        else
+                        else if (Directory.Exists(path))
                         {
-                            skippedCount++;
+                            found.AddRange(EnumerateImages(path));
                         }
                     }
-                    else if (Directory.Exists(path))
+                    catch (Exception ex)
                     {
-                        found.AddRange(EnumerateImages(path));
+                        AppLogger.Warn($"Failed to scan '{path}': {ex.Message}");
                     }
                 }
 
@@ -443,16 +594,30 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     }
                 }
 
-                LoadPreview(files[0]);
+                if (IsSupportedVideo(files[0]))
+                {
+                    PreviewImage = null;
+                    PreviewInfo = "Video selected. Preview unavailable.";
+                    SuggestedScale = string.Empty;
+                }
+                else
+                {
+                    LoadPreview(files[0]);
+                }
                 string? baseDir = Path.GetDirectoryName(files[0]);
                 if (!string.IsNullOrWhiteSpace(baseDir))
                 {
                     OutputFolder = baseDir;
                 }
                 JobProgressText = skipped > 0
-                    ? $"Loaded {SelectedFiles.Count} image(s), skipped {skipped} unsupported."
-                    : $"Loaded {SelectedFiles.Count} image(s).";
+                    ? $"Loaded {SelectedFiles.Count} file(s), skipped {skipped} unsupported."
+                    : $"Loaded {SelectedFiles.Count} file(s).";
             });
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Failed to add files.", ex);
+            JobProgressText = $"Failed to load files: {ex.Message}";
         }
         finally
         {
@@ -465,7 +630,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Microsoft.Win32.OpenFileDialog dialog = new()
         {
             Multiselect = true,
-            Filter = "Images|*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.tiff"
+            Filter = "Images and videos|*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.tiff;*.mp4;*.mov;*.mkv;*.avi;*.webm;*.3gp"
         };
 
         if (dialog.ShowDialog() == true)
@@ -583,14 +748,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 InputFiles = new List<string> { input },
                 OutputFolder = previewFolder,
-                Scale = SelectedScale,
+                Scale = ResolveEffectiveScale(),
                 Mode = SelectedMode,
                 Model = SelectedModel,
                 TileSize = 0,
                 TileOverlap = 0,
                 OutputFormat = "Png",
                 JpegQuality = JpegQuality,
-                PreviewCrop = crop
+                DenoiseStrength = EnableDenoise ? DenoiseStrength : 0,
+                PreviewCrop = crop,
+                EnableTemporalBlend = false
             };
 
             UpscaleResult result = await Task.Run(
@@ -639,22 +806,36 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         UpscaleProgressPercent = 0;
 
+        List<string> videoInputs = inputs.Where(IsSupportedVideo).ToList();
+        List<string> imageInputs = inputs.Where(IsSupportedImage).ToList();
+        if (videoInputs.Count > 0 && imageInputs.Count > 0)
+        {
+            JobProgressText = "Mixed images and videos are not supported in one run.";
+            return;
+        }
+
+        if (videoInputs.Count > 0)
+        {
+            await UpscaleVideosAsync(videoInputs);
+            return;
+        }
+
         if (SkipDuplicates)
         {
-            inputs = FilterDuplicates(inputs, out int skipped);
+            imageInputs = FilterDuplicates(imageInputs, out int skipped);
             if (skipped > 0)
             {
                 JobProgressText = $"Skipped {skipped} duplicate file(s).";
             }
         }
 
-        if (inputs.Count == 0)
+        if (imageInputs.Count == 0)
         {
             JobProgressText = "No files to upscale.";
             return;
         }
 
-        string outputFolder = ResolveOutputFolder(inputs.Count);
+        string outputFolder = ResolveOutputFolder(imageInputs.Count);
         Directory.CreateDirectory(outputFolder);
 
         OnnxInferenceEngine? engine = null;
@@ -679,20 +860,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 }
             });
 
-            int tileSize = ResolveTileSize(inputs);
+            int tileSize = ResolveTileSize(imageInputs);
             int tileOverlap = ResolveTileOverlap();
             UpscaleRequest request = new()
             {
-                InputFiles = inputs,
+                InputFiles = imageInputs,
                 OutputFolder = outputFolder,
-                Scale = SelectedScale,
+                Scale = ResolveEffectiveScale(),
                 Mode = SelectedMode,
                 Model = SelectedModel,
                 TileSize = tileSize,
                 TileOverlap = tileOverlap,
                 SkipDuplicates = SkipDuplicates,
                 OutputFormat = SelectedOutputFormat,
-                JpegQuality = JpegQuality
+                JpegQuality = JpegQuality,
+                DenoiseStrength = EnableDenoise ? DenoiseStrength : 0,
+                EnableTemporalBlend = EnableTemporalBlend,
+                TemporalBlendStrength = TemporalBlendStrength
             };
 
             UpscaleResult result = await Task.Run(
@@ -725,6 +909,94 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task UpscaleVideosAsync(IReadOnlyList<string> videos)
+    {
+        if (videos.Count == 0)
+        {
+            JobProgressText = "No videos to upscale.";
+            return;
+        }
+
+        string outputFolder = ResolveOutputFolder(videos.Count);
+        Directory.CreateDirectory(outputFolder);
+
+        OnnxInferenceEngine? engine = null;
+        try
+        {
+            IsProcessing = true;
+            UpscaleProgressPercent = 0;
+            _jobCts = new CancellationTokenSource();
+
+            ImagePipeline pipeline = CreatePipeline(out engine);
+            VideoPipeline videoPipeline = new(pipeline, new FfmpegRunner());
+            List<string> outputs = new();
+
+            for (int i = 0; i < videos.Count; i++)
+            {
+                int currentVideo = i + 1;
+                string input = videos[i];
+                ResetVideoPhaseProgress();
+                Progress<UpscaleProgress> progress = new(p =>
+                {
+                    double videoFraction = p.OverallPercent / 100.0;
+                    double overall = (currentVideo - 1 + videoFraction) / videos.Count;
+                    double overallPercent = overall * 100;
+                    UpscaleProgressPercent = overallPercent;
+                    UpdateVideoPhaseProgress(p.Message);
+                    JobProgressText = $"Video {currentVideo}/{videos.Count} - Decode {_videoDecodePercent:0}% | Upscale {_videoUpscalePercent:0}% | Encode {_videoEncodePercent:0}% (Overall {overallPercent:0}%)";
+                });
+
+                VideoUpscaleRequest request = new()
+                {
+                    InputPath = input,
+                    OutputFolder = outputFolder,
+                    Scale = ResolveEffectiveScale(),
+                    Mode = SelectedMode,
+                    Model = SelectedModel,
+                    TileSize = ResolveVideoTileSize(),
+                    TileOverlap = ResolveTileOverlap(),
+                    JpegQuality = JpegQuality,
+                    DenoiseStrength = EnableDenoise ? DenoiseStrength : 0,
+                    EnableTemporalBlend = EnableTemporalBlend,
+                    TemporalBlendStrength = TemporalBlendStrength,
+                    UseHardwareDecode = UseHardwareDecode,
+                    VideoEncoder = SelectedVideoEncoder
+                };
+
+                string output = await Task.Run(
+                    () => videoPipeline.UpscaleAsync(request, progress, _jobCts.Token),
+                    _jobCts.Token);
+                outputs.Add(output);
+                UpdateRecentOutputs(new[] { output });
+            }
+
+            if (engine != null)
+            {
+                UpdateDeviceStatus(engine);
+            }
+
+            JobProgressText = $"Video upscale completed. Saved {outputs.Count} file(s).";
+            UpscaleProgressPercent = 100;
+        }
+        catch (OperationCanceledException)
+        {
+            JobProgressText = "Video upscale canceled.";
+            UpscaleProgressPercent = 0;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Video upscale failed.", ex);
+            JobProgressText = $"Video upscale failed: {ex.Message}";
+            UpscaleProgressPercent = 0;
+        }
+        finally
+        {
+            IsProcessing = false;
+            _jobCts = null;
+            engine?.Dispose();
+        }
+    }
+
     private void CancelAll()
     {
         if (IsDownloading)
@@ -744,9 +1016,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private bool CanRedownloadModel() => SelectedModel != null && IsSelectedModelAvailable && !IsDownloading && !IsProcessing;
 
-    private bool CanPreview() => SelectedFiles.Count > 0 && SelectedModel != null && !IsSelectedModelMissing && !IsProcessing && !IsDownloading;
+    private bool CanPreview()
+        => SelectedFiles.Count > 0
+        && SelectedFiles.All(IsSupportedImage)
+        && SelectedModel != null
+        && !IsSelectedModelMissing
+        && !IsProcessing
+        && !IsDownloading;
 
-    private bool CanUpscale() => SelectedFiles.Count > 0 && SelectedModel != null && !IsSelectedModelMissing && !IsProcessing && !IsDownloading;
+    private bool CanUpscale()
+        => SelectedFiles.Count > 0
+        && SelectedModel != null
+        && !IsSelectedModelMissing
+        && !IsProcessing
+        && !IsDownloading;
 
     private void UpdateModelStatus()
     {
@@ -761,6 +1044,25 @@ public sealed class MainViewModel : INotifyPropertyChanged
         IsSelectedModelMissing = !available;
         ModelStatus = available ? "Ready (local model found)." : "Missing model. Download required.";
         UpdateActionState();
+    }
+
+    private void SyncSelectedScaleToModel()
+    {
+        if (SelectedModel?.Scale > 0 && SelectedScale != SelectedModel.Scale)
+        {
+            SelectedScale = SelectedModel.Scale;
+            OnPropertyChanged(nameof(SelectedScale));
+        }
+    }
+
+    private int ResolveEffectiveScale()
+    {
+        if (SelectedModel?.Scale > 0)
+        {
+            return SelectedModel.Scale;
+        }
+
+        return SelectedScale;
     }
 
     private static void DeleteModelFiles(ModelDefinition model)
@@ -866,17 +1168,53 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private static IEnumerable<string> EnumerateImages(string folder)
     {
-        foreach (string file in Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories))
+        Stack<string> pending = new();
+        pending.Push(folder);
+        while (pending.Count > 0)
         {
-            if (IsSupported(file))
+            string current = pending.Pop();
+            IEnumerable<string> files;
+            try
             {
-                yield return file;
+                files = Directory.EnumerateFiles(current, "*.*", SearchOption.TopDirectoryOnly);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"Failed to scan folder '{current}': {ex.Message}");
+                continue;
+            }
+
+            foreach (string file in files)
+            {
+                if (IsSupportedImage(file) || IsSupportedVideo(file))
+                {
+                    yield return file;
+                }
+            }
+
+            IEnumerable<string> directories;
+            try
+            {
+                directories = Directory.EnumerateDirectories(current);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn($"Failed to enumerate subfolders in '{current}': {ex.Message}");
+                continue;
+            }
+
+            foreach (string directory in directories)
+            {
+                pending.Push(directory);
             }
         }
     }
 
-    private static bool IsSupported(string path)
-        => SupportedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+    private static bool IsSupportedImage(string path)
+        => SupportedImageExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsSupportedVideo(string path)
+        => SupportedVideoExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
     private static ImageCrop? GetPreviewCrop(string path)
     {
@@ -948,6 +1286,57 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private void ResetVideoPhaseProgress()
+    {
+        _videoDecodePercent = 0;
+        _videoUpscalePercent = 0;
+        _videoEncodePercent = 0;
+    }
+
+    private void UpdateVideoPhaseProgress(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        if (TryParsePhasePercent(message, "Decoding frames", out double decode))
+        {
+            _videoDecodePercent = decode;
+            return;
+        }
+
+        if (TryParsePhasePercent(message, "Upscaling frames", out double upscale))
+        {
+            _videoUpscalePercent = upscale;
+            return;
+        }
+
+        if (TryParsePhasePercent(message, "Encoding video", out double encode))
+        {
+            _videoEncodePercent = encode;
+        }
+    }
+
+    private static bool TryParsePhasePercent(string message, string prefix, out double percent)
+    {
+        percent = 0;
+        if (!message.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        int open = message.IndexOf('(');
+        int close = message.IndexOf(')');
+        if (open < 0 || close <= open)
+        {
+            return false;
+        }
+
+        string raw = message.Substring(open + 1, close - open - 1).TrimEnd('%').Trim();
+        return double.TryParse(raw, out percent);
+    }
+
     private int GetAutoTileSize(int count)
     {
         if (SelectedMode.Equals("Fast", StringComparison.OrdinalIgnoreCase))
@@ -996,6 +1385,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         return GetAutoTileSize(inputs.Count);
+    }
+
+    private int ResolveVideoTileSize()
+    {
+        if (int.TryParse(TileSizeText, out int size) && size > 0)
+        {
+            return size;
+        }
+
+        return 0;
     }
 
     private int ResolveTileOverlap()

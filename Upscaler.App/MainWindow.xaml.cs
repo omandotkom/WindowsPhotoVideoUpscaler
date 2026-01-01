@@ -1,4 +1,5 @@
 using System.Windows;
+using Upscaler.App.Infrastructure;
 using Upscaler.App.ViewModels;
 
 namespace Upscaler.App;
@@ -19,7 +20,14 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        await _viewModel.LoadAsync();
+        try
+        {
+            await _viewModel.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Failed to load main view model.", ex);
+        }
     }
 
     private void DropZone_OnDrop(object sender, System.Windows.DragEventArgs e)

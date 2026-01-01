@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Upscaler.App.Infrastructure;
 
 namespace Upscaler.App.ViewModels;
 
@@ -32,6 +33,10 @@ public sealed class AsyncRelayCommand : ICommand
             _isExecuting = true;
             RaiseCanExecuteChanged();
             await _execute();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Unhandled command execution error.", ex);
         }
         finally
         {
