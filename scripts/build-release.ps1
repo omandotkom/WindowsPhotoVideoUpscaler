@@ -2,6 +2,7 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$OutputRoot = "dist",
+    [bool]$SelfContained = $true,
     [ValidateSet("patch","minor","major")]
     [string]$Bump = "patch"
 )
@@ -82,7 +83,7 @@ if (Test-Path $zipPath) {
 dotnet publish $project `
     -c $Configuration `
     -r $Runtime `
-    --self-contained false `
+    --self-contained $SelfContained `
     /p:PublishSingleFile=true `
     /p:IncludeNativeLibrariesForSelfExtract=true `
     /p:PublishReadyToRun=false

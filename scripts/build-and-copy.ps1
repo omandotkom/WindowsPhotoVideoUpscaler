@@ -2,7 +2,8 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$OutputRoot = "dist",
-    [string]$ArchiveDrop = "Z:\\D\\Upscaler"
+    [string]$ArchiveDrop = "Z:\\D\\Upscaler",
+    [bool]$SelfContained = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,7 +33,7 @@ try {
     dotnet publish $project `
         -c $Configuration `
         -r $Runtime `
-        --self-contained false `
+        --self-contained $SelfContained `
         /p:PublishSingleFile=true `
         /p:IncludeNativeLibrariesForSelfExtract=true `
         /p:PublishReadyToRun=false
